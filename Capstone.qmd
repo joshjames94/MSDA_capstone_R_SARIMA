@@ -1,0 +1,428 @@
+---
+title: "MSDA Capstone - Time Series Analysis of Movie Tickets Sold"
+author: "Joshua James"
+format:
+  html:
+    embed-resources: true
+---
+
+## Part A: Research Question
+
+#### "To what extent can ticket sales be predicted?"
+
+This research question is aimed at providing useful information for a movie studio on when future peaks and valleys in ticket sales might be. While some movies are scheduled around specific dates (i.e. romantic movies for Valentine's Day, Christmas movies at Christmas, etc.), other movie release dates aim to more specifically predict when ticket sales will be high or low to appropriately match the expectations. Big blockbuster movies are typically released at times when studios predict high ticket sales in general to match the high number of sales that will be needed to recoup the big budgets (Turner).
+
+Based on this, it would be helpful to analyze what extent ticket sales can be predicted to get an idea of how accurately future ticket sales might be predicted. 
+
+I hypothesize that there will be both seasonal peaks in ticket sales associated with events like the start of summer or winter holiday breaks. I also hypothesize that there will be a general trend either up or down in sales over the years as moviegoing preferences at large develop and change. Finally, I hypothesize that SARIMA time series analysis will allow us reasonably conclude both an expected accuracy of predictions and a general time range into the future at which the predictions will be useful and reliable.
+
+In this case, the null hypothesis will be that ticket sales cannot be accurately predicted and the specific alternate hypothesis is that there will be some range in which sales can be predicted at 90% accuracy. 
+
+## Part B: Data Collection 
+
+This data comes from a csv file of data stored on Kaggle that I am the owner of. The data is private but accessible to anyone with this URL link:
+
+https://kaggle.com/datasets/14c9069d6108061cb841873b2b1ffc23dd04d2f2a8beee824eb59abc86f1e08c
+
+This data is synthetic and while it is intended to mimic potential "real" trends in movie ticket sales, it is not necessarily representative of real world situations. Even so, the strategies employed in this analysis should still be transferable to real data if a movie studio had access to real world data that matched this format. This is a direct disadvantage of using this data, but the concepts of SARIMA analysis are applicable to any time series data and it is even possible that a model with similar pdq parameters could match real-world data. 
+
+## Part C: Data Extraction and Preparation
+
+Before beginning any real data work, the following libraries in R were installed and loaded in.
+
+```{r}
+# The astsa library contains the sarima functions
+library(astsa)
+# ggplot2 for more graph customization
+library(ggplot2)
+# tidyr for the pivot_longer function
+library(tidyr)
+# tsibble for yearmonth object type
+library(tsibble)
+# dplyr for mutate
+library(dplyr)
+```
+
+Because the data set being used is directly available on kaggle in a csv format, the extraction is very simple. The csv file was downloaded and then brought into my R studio environment. From there, the following code was used to load the data.
+
+```{r}
+# Load the data from the csv file
+ts_data <- read.csv("tickets_sold_monthly_2000_2019.csv")
+summary(ts_data)
+head(ts_data$Month)
+tail(ts_data$Month)
+```
+
+After examining the summary, head, and tail of the data; it is clear that the "Month" variable would be easier to use if it were not simply a character field. Functions from the tsibble package allow this variable to recreated as a "yearmonth" object which will be easier to work with in this context. 
+
+```{r}
+# Convert month data to yearmonth type
+ts_data$month <- yearmonth(ts_data$Month)
+```
+
+To continue preparing the data, at this stage it is helpful to run some basic tests to determine the quality of the data and to visualize it. In the code chunk below we examine the data visually. No obvious issues exist so far. We also confirm that there is no missing data by confirming that there are no NA values and comparing the length of the data to the expected time range of the data.
+
+```{r}
+# Plot the monthly data to visualize it
+ggplot(ts_data, aes(x = month, y = Monthly_Sales)) +
+  geom_line() +
+  labs(title = "Monthly Movie Ticket Sales Data", 
+       x = "Month (Year-Month)", 
+       y = "Number of Sales") +
+  theme_minimal()
+
+# No missing data is confirmed by the length, 
+# missingness, and max of the variables
+sum(is.na(ts_data))
+# No missing values
+length(ts_data$month)
+# 240 months in the dataset
+max(ts_data$month)-min(ts_data$month)+1
+# 240 months from first date to last
+# +1 for the final month gets 240 total
+```
+
+Now that we are relatively confident in the quality of the data, the only remaining preparation step is to convert the ticket sales values into a time series object so that time series analysis can begin.
+
+```{r}
+# Convert data file to ts (time series) format
+# Use 12 months for yearly cycles
+tickets <- ts(data=ts_data$Monthly_Sales, frequency = 12)
+plot(tickets)
+```
+
+To summarize, data was extracted by downloading the csv file and loading it into R using the read.csv() function. The ggplot function was used to visualize the data and the sum of is.na(), length, and max/min comparison functions were used to check the missingness of the data. Lastly, the ts() function was used to convert the tickets sales into a time series. 
+
+These methods are appropriate for the following reasons:
+read.csv() - We are starting with a very standard csv file that does not require any other special tools to read into R.
+yearmonth() - This function specifically takes the character values that are in a YYYY-MM-DD format and converts them to a more helpful YYYY MMM format that both removes the irrelevant day value (the metadata on this file specifies that the day is not meaningful) and converts the month to a 3 letter month code that is more intuitive than numeric months. It also makes graphing simpler by allowing ggplot to understand that not every year-month needs to be displayed on the axis.
+ggplot() - While the plot() could have been used here, ggplot allows more granular control of things like axis labels.
+sum() of is.na() - is.na() returns a TRUE (or essentially a 1) for any NA value in the data and sum() adds them up. If the sum is 0, there is no NA data. This did assume that blank data was not a problem in this case, but the conversion to the yearmonth type in a previous step would have given an error if data was blank. 
+length() - Determining the length of either column/variable in the data set gives a comparison point of how many data points there are in the set.
+max() and min() - The max() and min() functions in this case are able to calculate the number of months between the first month listed and the last month listed. We add 1 to this to get the actual number of months there should be in that gap. If it aligns with the length, then we confirm that no individual month of data is missing.
+
+As far as the advantanges and disadvantages of this strategy go, using a csv file and loading it directly in with the read.csv() function is perhaps the simplest way to get external data up and running in R. The simplicity of it is a huge advantage. On the other hand, because it is simple, this strategy of loading in the data relies on the data being structured correctly and then handles minor data cleaning problems after it is loaded into R. Another tool like a SQL query might be more appropriate for more complex data, especially if it were already stored in a SQL database. 
+
+
+## Part D: Analysis
+
+Now that our data has been loaded, cleaned, and put into a ts() time series format, we can begin our SARIMA analysis. Since it appears from previous visualizations that the data might have an upward trend, we should create a set of the data that has been differenced to remove the trend.
+
+```{r}
+# Difference the data to remove any trend 
+d_tickets <- diff(tickets)
+plot(d_tickets)
+```
+
+Next we will examine the data for seasonal or periodic trends using a periodogram. This will be done using the spectrum() function on both the base data and the differenced data. From here, we extra the max value of the periodogram and take the inverse of it to obtain the period that is most likely to be a pattern in the data.
+
+```{r}
+# Plot a periodogram of both the base data and the differenced data
+spectrum(tickets)
+# Not a true spike, but worth checking
+# Pull the maximum value from the periodogram and find the frequency of it
+freq1 <- spectrum(tickets)$freq[which.max(spectrum(tickets)$spec)]
+# Invert the frequency to determine the period
+1/freq1
+# 0.5 -> half year patterns
+
+# Check the differenced periodogram data too
+spectrum(d_tickets)
+# Not a true spike, but worth checking
+# Pull the maximum value from the periodogram and find the frequency of it
+freq2 <- spectrum(d_tickets)$freq[which.max(spectrum(d_tickets)$spec)]
+# Invert the frequency to determine the period
+1/freq2
+# 0.5 -> half year patterns
+```
+
+In this case, both periodograms show exactly a 0.5 or half year pattern. This gives us a clue of how we might handle the final paramater in our SARIMA model. It also informs where we might want to pay attention in our next step: acf and pacf charts.
+
+The code below shows how the autocorrelation and partial autocorrelation function was used on both the differenced and non differenced data to help determine what AR, MA, and seasonal AR / MA components should be used. This is done by using the acf2() function. In the first set we set the max.lag to be 1 or 2 less than the total number of data points (240 - 1 = 239, 240 - 2 = 238 in this case.) This shows a broad view that might be easier to spot seasonal trends in. The next set uses a max.lag of just 12 to focus on the first few lags, while also incorporating enough data to possibly see the 6 month periodicity. 
+
+```{r}
+# Make acf and pacf charts of the data and differenced data
+# Long view charts of non-differenced data
+acf2(tickets, max.lag = 239)
+```
+
+The long view charts on the non differenced data (above) show an ACF function that is tailing off and a PACF function that is cutting off at lag = 1. This potentially indicates a first order AR model (p = 1). We can also see that, for sure the ACF and potentially the PACF too, spike back again at each 12 month mark. This is possibly indicative of seasonal components but not conclusive yet. 
+
+```{r}
+acf2(d_tickets, max.lag = 238)
+```
+
+The acf and pacf charts for the long view of the difference data are much harder to interpret. For the PACF in particular we will likely learn more from the shorter view shown two sets below.
+
+```{r}
+acf2(tickets, max.lag = 12)
+```
+
+Looking at the shorter view of the charts for the non-differenced data is it much more clear that (a) the PACF is definitely cutting off at lag 1 and (b) the PACF has a spike back up just shy of the 1 year lag point. The ACF chart is less meaningful here, but it still seems to be tailing off and potentially spiking back up slightly at 1 year of lag (12 months).
+
+```{r}
+acf2(d_tickets, max.lag = 12)
+```
+
+Unfortunately, this shorter view of the differenced data does not seem to be more helpful. It does look like there could be some kind of a spike at lag = 12 for ACF, but the PACF chart is too messy to provide anything meaningful. 
+
+At this point, the best next course of action is to test a few different models and compare performance to determine what set of SARIMA parameters we should be using. Out the gate, we want to be sure that any coefficient that is included in the model has a p value less than 0.05. We also want to monitor the AIC and BIC scores to monitor accuracy and prevent potential overfitting. The chart of p values for the Ljung-Box statistic is another important diagnostic to monitor as a gauge of whether the autocorrelation in the data is being effectively captured. 
+
+The attempts at model coefficients are shown in the code below.
+
+```{r}
+# Try SARIMA values
+
+# AR 1, no seasonality
+sarima(tickets, p = 1, d = 0, q = 0)
+# Good p values, AIC 13, BIC 13.1
+# Ljung-Box statistic does not look great
+# Should add more complexity
+```
+
+This is perhaps the simplest modeling option in this case. The model does provide some value in predictions, but the plot of p values for the Ljung-Box statistic shows almost no values above 0.05 as desired (marked by the dashed blue line on the charts.) This test in particular will come up a lot and rather than explaining the issue each time, it will just be summarized below.
+
+The Ljung-Box test compares a null hypothesis that the residuals are independently distributed with an alternative hypothesis that the residuals are NOT independently distributed and thus exhibit some amount of autocorrelation. The p value for the test across each lag is desired to be above 0.05. This would indicate the test fails to reject the null hypothesis which would mean "the residuals are independently distributed." This is the desired outcome because this means the residuals of the model are relatively random and to not exhibit any patterns which might indicate predictable factors that the model does not currenlty represent or accurately capture. 
+
+For this particular model, almost all the p values are low, so we reject the null hypothesis and assert that the residuals ARE autocorrelated and thus there are more complex modeling features that need to be incorporated. This will be true of any future model where this graph shows low p values.
+
+```{r}
+# AR 1, MA 1 no seasonality
+sarima(tickets, p = 1, d = 0, q = 1)
+# MA 1 p value of 0.63, AIC 13.1, BIC 13.1
+# Definitely no MA component
+```
+
+This model is slightly more complex, bringing in an MA component in addition to the AR component. However, we immediately see that the MA component is not justified because its p-value is significantly above 0.05.
+
+```{r}
+# AR 1, no seasonality, I 1 (integrative for trend removal)
+sarima(tickets, p = 1, d = 1, q = 0)
+# Bad p values, AIC 13.2, BIC 13.2
+# Worse in every way
+```
+
+This model maintains the AR component, scraps the MA component, and instead adds an I component. This model is worse by all measures and is not worth considering further.
+
+```{r}
+# AR 1, Seasonal I 1, S = 12
+sarima(tickets, p = 1, d = 0, q = 0, P = 0, D = 1, Q = 0, S = 12)
+# Good p values, AIC 13.1, BIC 13.1
+# Decent but likely still needs more complexity
+```
+
+With this model, we begin incorporating the seasonal ARIMA components, in this case starting with a seasonal I component. Most of our scoring metrics look good here, but the Ljung-Box still indicates a lack of appropriate model complexity.
+
+```{r}
+# AR 1 Seasonal I 1, MA 1, S = 12
+sarima(tickets, p = 1, d = 0, q = 0, P = 0, D = 1, Q = 1, S = 12)
+# Good p values, AIC 12.6, BIC 12.7
+# Finally a good Ljung-Box statistic p value chart
+# By far the best so far!
+```
+
+This model maintains the components of the previous model and adds a seasonal MA component. This model has the best scoring metrics seen thus far, including p values above 0.05 across the board for our Ljung-Box test for the first time. This is an excellent model, but we should still try variations to see if we can improve it.
+
+```{r}
+# AR 1 Seasonal AR 1, I 1, MA 1, S = 12
+sarima(tickets, p = 1, d = 0, q = 0, P = 1, D = 1, Q = 1, S = 12)
+# sar1 p value of 0.92, AIC 12.6, BIC 12.7
+# Still a decent model, but the seasonal AR 1 is not helpful
+```
+
+This model keeps the components of the previous and adds a seasonal AR component. While the model still shows decent scores, the p value for the sAR component immediately shows that it is not substantiated. 
+
+```{r}
+# Try higher orders for comparison
+sarima(tickets, p = 1, d = 0, q = 0, P = 0, D = 1, Q = 2, S = 12)
+# sma2 p value 0.91
+sarima(tickets, p = 2, d = 0, q = 0, P = 0, D = 1, Q = 1, S = 12)
+# ar2 p value of 0.157 (just a bit too high)
+```
+
+In the two models shown above, we experimented with higher orders for our existing components. In both cases, the p values indicate that these higher order components are not reliable. 
+
+```{r}
+# Lets go back to our best model and try it with different S values for comparison
+sarima(tickets, p = 1, d = 0, q = 0, P = 0, D = 1, Q = 1, S = 6)
+# Good p values and AIC/BIC (12.7/12.8)
+# But the Ljung-Box statistic is not consistent above the p value threshold
+sarima(tickets, p = 1, d = 0, q = 0, P = 0, D = 1, Q = 1, S = 10)
+# Model is worse by most metrics
+```
+
+Finally, we compare the model with two other S values for the seasonal period. The S value of 6 shows good scoring metrics, but returns to performing poorly in the Ljung-Box test. The model with an S value of 10 scores worse in every way--which makes sense becaues there would be no reason to think that anything would have 10 month cycles. It does, however, serve as confirmation that the S value of 12 is important and useful. 
+
+In the end, the SARIMA (1, 0, 0) (0, 1, 1)12 is the best fit for this dataset. The scoring in this case exemplifies why SARIMA was appropriate for the analysis. SARIMA has advantages over almost all forms of traditional regression for this because it takes white noise into account, considers the affects of neighboring datapoints beyond simple trends (through AR and MA), and it incorporates seasonality. The code below, for example, shows a comparison of simple linear regression.
+
+```{r}
+# Comparison against linear regression
+linear <- lm(Monthly_Sales ~ month, ts_data)
+summary(linear)
+AIC(linear)
+BIC(linear)
+```
+
+The AIC and BIC scores here are orders of magnitude higher than for even the worst SARIMA models. SARIMA analysis provides enormous improvements on the accurate prediction of time series data like this data set. 
+
+Being able to incorporate seasonality in particular is a huge advantage of this strategy. We know from our graphs that there seem to be large peaks and valleys even as the data trends up, and matching those to seasonal patterns is a huge advantage for the accuracy of this method.
+
+On the other hand, SARIMA analysis definitely runs the risk of overcomplicating this type of analysis. If this were more granular data (i.e. weekly or daily reports of ticket sales), a very large amount of computing power would be needed to model either S=52 (for 52 weeks in a year) of S=365.25 (for approximately 365 & 1/4 days in a year) with SARIMA. Calculating that many lags back would be very computationally demanding and could essentially make the analysis impractical or even impossible on similar data sets. SARIMA is much more efficient when the S values for seasonality are relatively low and it is a distinct disadvantage of this strategy.
+
+## Part E: Data Summary and Implications
+
+As we examine the implications of the SARIMA model analysis, there are a few more elements it will be helpful to look over. First, we will incorporated machine learning elements like train-test split of data to get an approximation of how applicable our model might be to unknown future data. 
+
+```{r}
+# Train and test data
+# Approxmiately 80% training data split
+train <- ts(tickets[1:192])
+test <- ts(tickets[193:240])
+
+# Use training data and make predictions against the test data
+# Predict ahead the same number of values as the remaining test values
+length(test)
+# n.ahead should be 48
+train_preds <- ts(sarima.for(train, n.ahead = 48, 1,0,0,0,1,1,12)$pred)
+# Calculate the root mean squared error for the predictions against the test
+rmse <- sqrt(mean((train_preds - test)^2))
+rmse
+```
+
+As shown above, splitting the data into training and testing data in a linear order allows us to compare potential predictions against actual data. We calculate a root mean squared error value of 155.6 in this case. You can also see the graph above where the predictions are shown as red data points with gray areas around them representing the confidence intervals for +-1 standard deviation and then +-2 as well. 
+
+We can also compare this with a simpler model, like the ARIMA 1, 1, 0. This is shown below.
+
+```{r}
+# Compare with ARIMA 1 1 0 model
+c_train_preds <- ts(sarima.for(train, n.ahead = 48, 1,1,0)$pred)
+# Calculate the root mean squared error for the predictions against the test
+rmsec <- sqrt(mean((c_train_preds - test)^2))
+rmsec
+```
+
+This obviously shows a much more simplistic approach where the prediction more closely mirrors a linear model prediction. As a result, the confidence interval bands are significantly larger, because the model cannot predict as accurately. We also see that the RMSE score has increased from 155.6 to 198.8. This simply confirms the comparative quality of the more complex SARIMA model. 
+
+The code chunk below set us up to visually examine the difference between actual and predicted data.
+
+```{r}
+# Plot the two against each other
+# Create a data frame for ease in ggplot
+plot_data2 <- data.frame(time = 193:240, 
+                         Predictions = as.numeric(train_preds), 
+                         Actual = as.numeric(test))
+
+# Reshape the data for ggplot2
+plot_data2_long <- pivot_longer(plot_data2, cols = c(Predictions, Actual), 
+                                names_to = "Series", values_to = "Value")
+
+# Create the plot
+ggplot(plot_data2_long, aes(x = time, y = Value, color = Series)) +
+  geom_line() +
+  labs(title = "Time Series Predictions and Actual Values", x = "Time", y = "Value")
+
+```
+
+In the graph above, we can see more precisely how the prediction seems to be attempting to match the inherent patterns of the data. Visually, it appears that the predictions are quite good at matching the peaks of the data while the predictions struggle to match the deep valleys of the data. In-and-of-itself this might be useful to know. Being able to predict peaks well is certainly useful on its own, but it also good to know that the model might miss how deep the valleys could be. We can also see visually how the model has begun predicting the seasonal peaks to be a high peak followed by a valley and then a medium peak ~6 months later followed by another valley and a high peak ~6 months later where the cycle then repeats.
+
+Essentially, these tests and visualizations of our model show us the way that statistics can be paired with our model to not only make predictions about future data, but to give reliable estimates of the confidence intervals for those predictions. Below you can see how a graph of the combined train data, test data, and a future prediction of the data might look with this model.
+
+```{r}
+# Predict out 24 months extra
+# Create an NA time series with 240 + 24 slots (264)
+full_set <- rep(NA, 264)
+# Assign the predictions to the last 24 slots
+forecast <- sarima.for(tickets, n.ahead = 24, 1,0,0,0,1,1,12)
+full_set[241:264] <- forecast$pred
+full_set[1:240] <- tickets
+
+# Add the confidence bands
+lower_band1 <- ts(rep(NA, 264))
+upper_band1 <- ts(rep(NA, 264))
+lower_band2 <- ts(rep(NA, 264))
+upper_band2 <- ts(rep(NA, 264))
+lower_band1[241:264] <- forecast$pred-forecast$se
+upper_band1[241:264] <- forecast$pred+forecast$se
+lower_band2[241:264] <- forecast$pred-2*forecast$se
+upper_band2[241:264] <- forecast$pred+2*forecast$se
+
+# Label the parts of the graph
+line_category <- rep(NA,264)
+line_category[1:192] <- "Train"
+line_category[193:240] <- "Test"
+line_category[240:264] <- "Prediction"
+
+# Create a data frame for the forecast
+forecast_df <- data.frame(time = 1:264, 
+                          forecast = full_set, 
+                          lower1 = lower_band1, 
+                          upper1 = upper_band1,
+                          lower2 = lower_band2,
+                          upper2 = upper_band2,
+                          color_category = line_category)
+
+# Plot the forecast and confidence intervals
+# Color the segments for train/test/prediction
+# Add a 1 standard error and 2 standard error range around the prediction
+# Move the legend to the top left to save space
+ggplot(forecast_df, aes(x = time, y = forecast)) +
+  geom_line(aes(color = color_category)) +
+  scale_color_manual(values = c("Train" = "darkblue", 
+                                "Test" = "darkgreen", 
+                                "Prediction" = "darkred")) +
+  geom_ribbon(aes(ymin = lower1, ymax = upper1), 
+              alpha = 0.2, 
+              fill = "red") +
+  geom_ribbon(aes(ymin = lower2, ymax = upper2), 
+              alpha = 0.1, 
+              fill = "red") +
+  labs(title = "Train and Test Data with Forecast", 
+       x = "Month", 
+       y = "Tickets Sold") +
+  theme(legend.position = "inside", 
+        legend.position.inside = c(0.2, 0.8))
+
+```
+
+Examining this colored chart, the main point of interest is the prediction data out at the end. The darkest red shading shows the bound in which 1 standard deviation of data should fall. The lighter red shading shows an additional standard deviation. If we assume normal distribution of data around the predictions (which should be true based on our uncorrelated residuals), the first essentially has about a 68% chance of including the actual value and the second wider area has about a 95% chance of including the actual value. 
+
+We can do more specific accuracy testing by examining the test data against predictions (as shown previously.) We expand on this with actual accuracy scores below.
+
+```{r}
+# Accuracy data
+acc_data <- plot_data2 %>%
+  mutate(Accuracy = 1 - abs((Predictions - Actual)/Actual))
+
+acc_data
+```
+
+As shown in the raw data comparison from predictions to actual test values, the model often predicts with 90% or great accuracy. Some accuracy scores even exceeded 99%. Below we can see the worst and best predictions.
+
+```{r}
+# Find the best accuracy and its corresponding time
+best <- max(acc_data$Accuracy)
+time_best <- acc_data$time[which.max(acc_data$Accuracy)]
+
+cat("Best Accuracy:", best, "at month #:", time_best, "\n")
+
+# Find the worst accuracy and its corresponding time
+worst <- min(acc_data$Accuracy)
+time_worst <- acc_data$time[which.min(acc_data$Accuracy)]
+
+cat("Worst Accuracy:", worst, "at month #:", time_worst, "\n")
+```
+
+The while the highest accuracy exceeded 99%, the lowest dropped below 65%. Because there are a large percentage of values that show above 90% accuracy, it seems reasonable to reject the null hypothesis and conclude that there is some range in which ticket sales can be predicted with 90% accuracy. It is not completely clear whether that is a consistent range beyond the data (by number or by percentage ahead) because even the 2nd prediction in this set is below 90% accuracy while the second to last prediction is above 90% accuracy. The less accurate predictions are interspersed in the test range seemingly at random, so it is not safe to conclude an exact number of future months that could be accurately predicted out to. Of course, all of this has another complication which is that performance on the test data by no means guarantees performance on future unknown data. However, this is all the data we have access to so we can only make our judgments on what we know from this.
+
+In conclusion, we reject our null hypothesis and claim that future ticket sales can be predicted with 90% accuracy across some future range. However, we can not confidently claim a particular range in which the data will be most accurate. Based on the seasonal component, future data likely should not be predicted out farther than the 2 year range shown in our forecast chart above. We are also slightly limited here by the fact that even just predicting out 1 or 2 months ahead is not guaranteed to be 90% accurate because even our predictions against test data showed a poor prediction for the 2nd month it predicted.
+
+Based on these results, we recommend that prospective movie studios use an SARIMA (1,0,0)x(0,1,1)12 model to predict future ticket sales up to two years out. This can be used to determine expected release dates in which a high number of people will be buying movie tickets so that high budget blockbuster movies can be released those months. As we saw previously, the model does best when predicting the high peaks of the data and struggles more with predicting the low valleys of sales. As a result, low budget movies could be matched to lower sales months to help fill out schedules, but this is a risky strategy in general because the model sometimes overestimates how good a low month might be. This could result in a movie being release during a truly abysmal sales month when it was expected to be released during just a slightly low month. The main limitation of this course of action is the current working assumption that high ticket sales in general will connect with individual movies selling well. This is definitely not a guarantee, but it does seem very unlikely that a movie that needs to make $500 million to match expectations would be able to do that in a very low sales month, so at the bare minimum avoiding the valleys is a useful strategy.
+
+In the future, incorporating more data should only improve the model. It will be very important to retrain the model on future data. Personally, I am interested to see whether the general upward trend persists or whether that begins to either level off or reverse. This would have a large impact on future model predictions and that will need to be accounted for by retraining the model on any newer data that is available.
+
+It might also be very insightful to dedicate a higher powered analysis to this project. Training an SARIMA model on this data was feasible on a basic computing device, but even having weekly data instead of monthly could have meant an S value of 52 instead of 12. This would have drastically increased the computational power needs. And an S value of 365.25 (modeled after days in a year) would require tremendously more computation. Weekly or even daily data could provide much deeper insights to target specific release dates, but that was not feasible for this project because of the computational load. Future work should definitely explore a way to make the more insightful but more complex modeling of weekly or daily ticket sales data possible.
+
+## Part F:  Sources
+<div style="text-indent: -1em; padding-left: 1em;">
+Turner, Bambi. “How Are Movie Release Dates Chosen?” HowStuffWorks, System 1, entertainment.howstuffworks.com/how-are-movie-release-dates-chosen.htm. Accessed 22 Apr. 2025.
+</div>
